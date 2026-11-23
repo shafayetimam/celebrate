@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linear Clock Widget</title>
+<style>
+  :root { --bg:#d9d5ce; --card:#efece6; --ink:#1c1c1c; --idx:#e3402e; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#000; --card:#141414; --ink:#ede8e0; }
+  }
+  :root[data-theme="dark"] { --bg:#000; --card:#141414; --ink:#ede8e0; }
+  body { margin:0; padding:32px 16px; background:var(--bg); font-family:-apple-system, system-ui, sans-serif;
+         display:flex; flex-wrap:wrap; gap:24px; justify-content:center; align-items:flex-start; }
+  .w { background:var(--card); border-radius:22px; box-shadow:0 6px 24px rgba(0,0,0,.18); }
+  canvas { display:block; }
+  .cap { text-align:center; font-size:12px; color:#777; margin-top:8px; }
+</style>
+</head>
+<body>
+  <div><div class="w"><canvas id="small" data-w="170" data-h="170" data-hs="4" data-ms="20" data-f="11" data-p="12"></canvas></div><div class="cap">Small</div></div>
+  <div><div class="w"><canvas id="medium" data-w="364" data-h="170" data-hs="8" data-ms="40" data-f="12" data-p="16"></canvas></div><div class="cap">Medium</div></div>
+  <div><div class="w"><canvas id="large" data-w="364" data-h="382" data-hs="8" data-ms="40" data-f="13" data-p="18" data-day="1"></canvas></div><div class="cap">Large</div></div>
+<script>
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const mod = (a, n) => ((a % n) + n) % n;
+
+function tape(ctx, x0, y0, w, h, value, span, period, step, majorEvery, f, ink) {
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x0, y0 - 1, w, h + 2); ctx.clip();
+  const ppu = w / span, mid = x0 + w / 2;
+  ctx.strokeStyle = ink; ctx.fillStyle = ink;
+  ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x0, y0 + .5); ctx.lineTo(x0 + w, y0 + .5); ctx.stroke();
+  const first = Math.floor((value - span / 2) / step) - 1, last = Math.ceil((value + span / 2) / step) + 1;
+  ctx.font = `500 ${f}px ui-rounded, -apple-system, system-ui, sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let i = first; i <= last; i++) {
+    const u = i * step, x = mid + (u - value) * ppu;
+    const major = mod(i, majorEvery) === 0;
+    const half = !major && majorEvery % 2 === 0 && mod(i, majorEvery / 2) === 0;
+    ctx.lineWidth = major ? 1.6 : 0.8;
+    ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 + h * (major ? .40 : half ? .28 : .18)); ctx.stroke();
+    if (major) ctx.fillText(String(mod(Math.round(u), period)).padStart(2, '0'), x, y0 + h * .48);
+  }
+  ctx.restore();
+  // edge fade
+  const card = css('--card');
+  for (const [a, b] of [[x0, x0 + w * .16], [x0 + w, x0 + w * .84]]) {
+    const g = ctx.createLinearGradient(a, 0, b, 0);
+    g.addColorStop(0, card); g.addColorStop(1, card + '00');
+    ctx.fillStyle = g; ctx.fillRect(Math.min(a, b), y0 - 1, Math.abs(b - a), h + 2);
+  }
+}
+
+function dayStrip(ctx, x0, y0, w, hours, f, ink, idx) {
+  const inset = f, ww = w - inset * 2, y = y0 + 11;
+  ctx.globalAlpha = .35; ctx.strokeStyle = ink; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x0 + inset, y); ctx.lineTo(x0 + inset + ww, y); ctx.stroke(); ctx.globalAlpha = 1;
+  ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(x0 + inset, y); ctx.lineTo(x0 + inset + ww * hours / 24, y); ctx.stroke();
+  ctx.font = `${f}px ui-rounded, -apple-system, system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+  for (let h = 0; h <= 24; h++) {
+    const x = x0 + inset + ww * h / 24, M = h % 6 === 0;
+    ctx.lineWidth = M ? 1.4 : .7; ctx.beginPath(); ctx.moveTo(x, y - (M ? 5 : 3)); ctx.lineTo(x, y + (M ? 5 : 3)); ctx.stroke();
+    if (h % 3 === 0) { ctx.globalAlpha = .7; ctx.fillStyle = ink; ctx.fillText(String(h).padStart(2, '0'), x, y + 9); ctx.globalAlpha = 1; }
+  }
+  ctx.fillStyle = idx; ctx.beginPath(); ctx.arc(x0 + inset + ww * hours / 24, y, 4, 0, 7); ctx.fill();
+}
+
+function draw(cv, now) {
+  const W = +cv.dataset.w, H = +cv.dataset.h, dpr = devicePixelRatio || 1;
+  if (cv.width !== W * dpr) { cv.width = W * dpr; cv.height = H * dpr; cv.style.width = W + 'px'; cv.style.height = H + 'px'; }
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+  const f = +cv.dataset.f, p = +cv.dataset.p, ink = css('--ink'), idx = css('--idx');
+  const hours = now.getHours() + now.getMinutes() / 60 + now.getSeconds() / 3600;
+  const minutes = now.getMinutes() + now.getSeconds() / 60;
+  const small = cv.id === 'small', day = cv.dataset.day;
+
+  // header
+  ctx.globalAlpha = .65; ctx.fillStyle = ink; ctx.font = `600 ${f - 1}px -apple-system, system-ui, sans-serif`;
+  ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+  const d = now.toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short' }).toUpperCase();
+  ctx.letterSpacing = '1.2px'; ctx.fillText(d, p, p);
+  if (!small) { ctx.textAlign = 'right'; ctx.fillText(now.toTimeString().slice(0, 5), W - p, p); }
+  ctx.letterSpacing = '0px'; ctx.globalAlpha = 1;
+
+  const top = p + f + 8, bottomReserve = day ? 70 : 0;
+  const areaH = H - top - p - bottomReserve, gap = 6, rowH = (areaH - gap) / 2, w = W - 2 * p;
+  tape(ctx, p, top, w, rowH, hours, +cv.dataset.hs, 24, .25, 4, f, ink);
+  tape(ctx, p, top + rowH + gap, w, rowH, minutes, +cv.dataset.ms, 60, 1, 5, f, ink);
+  if (!small) {
+    ctx.globalAlpha = .4; ctx.fillStyle = ink; ctx.font = `700 ${f - 3}px -apple-system, system-ui, sans-serif`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+    ctx.fillText('H', p, top - 1); ctx.fillText('M', p, top + rowH + gap - 1); ctx.globalAlpha = 1;
+  }
+  // index line
+  const cx = W / 2; ctx.fillStyle = idx;
+  ctx.beginPath(); ctx.moveTo(cx - 4.5, top); ctx.lineTo(cx + 4.5, top); ctx.lineTo(cx, top + 6); ctx.fill();
+  ctx.fillRect(cx - 1, top + 6, 2, areaH - 6);
+
+  if (day) {
+    const y = H - p - 56;
+    ctx.globalAlpha = .6; ctx.fillStyle = ink; ctx.font = `600 ${f - 2}px -apple-system, system-ui, sans-serif`;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.letterSpacing = '1.5px'; ctx.fillText('TODAY', p, y);
+    ctx.letterSpacing = '0px'; ctx.globalAlpha = 1;
+    dayStrip(ctx, p, y + f + 4, w, hours, f - 2, ink, idx);
+  }
+}
+
+const params = new URLSearchParams(location.search);
+function tick() {
+  const now = params.get('t') ? new Date(params.get('t')) : new Date();
+  document.querySelectorAll('canvas').forEach(c => draw(c, now));
+}
+tick(); setInterval(tick, 1000);
+</script>
+</body>
+</html>
