@@ -1,9 +1,13 @@
 # Linear Clock widget (iOS)
 
-A WidgetKit widget that shows the time on two sliding tapes, hours on top and minutes below. The tapes move past a fixed red index line.
+A WidgetKit widget styled like an LED bar-graph clock. A black display in an aluminium housing has a 0–24 scale across the top, and green LED segments light up as the day goes by, one per half hour.
 
-Sizes: Small, Medium, Large (adds a 00–24 "today" strip), Extra Large (iPad) and Lock Screen rectangular.
-Light and dark mode are both supported. Requires iOS 17+.
+- **Small:** the day over two rows (0–12, 12–24), one segment per hour.
+- **Medium:** the full 0–24 bar, with a 0–60 minute bar under it.
+- **Large / Extra Large:** two half-hour rows for the day, plus the minute bar.
+- **Lock Screen (rectangular):** one 24-segment bar in the lock screen's tint.
+
+Requires iOS 17+.
 
 Open `preview.html` in a browser to see a live mock-up.
 

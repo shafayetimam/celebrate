@@ -1,7 +1,7 @@
 //  LinearClockWidget.swift
-//  A WidgetKit home-screen / lock-screen widget that shows the time as a
-//  linear clock: an hour tape and a minute tape slide past a fixed red
-//  index line in the middle of the widget.
+//  A WidgetKit widget styled like an LED bar-graph clock: a black display in
+//  an aluminium housing, a 0–24 scale across the top, and green LED segments
+//  that light up as the day goes by (one segment per half hour).
 //
 //  Requires iOS 17+ (uses containerBackground / contentMarginsDisabled).
 
@@ -15,9 +15,7 @@ struct ClockEntry: TimelineEntry {
 }
 
 struct ClockProvider: TimelineProvider {
-    func placeholder(in context: Context) -> ClockEntry {
-        ClockEntry(date: .now)
-    }
+    func placeholder(in context: Context) -> ClockEntry { ClockEntry(date: .now) }
 
     func getSnapshot(in context: Context, completion: @escaping (ClockEntry) -> Void) {
         completion(ClockEntry(date: .now))
@@ -34,155 +32,114 @@ struct ClockProvider: TimelineProvider {
     }
 }
 
-// MARK: - Palette
+// MARK: - Style
 
-enum Palette {
-    /// Warm paper white in light mode, near-black in dark mode.
-    static let background = Color(UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.08, green: 0.08, blue: 0.08, alpha: 1)
-            : UIColor(red: 0.94, green: 0.925, blue: 0.90, alpha: 1)
-    })
+struct LEDStyle {
+    let lit: Color
+    let litTop: Color
+    let unlit: Color
+    let label: Color
+    let glow: Bool
 
-    static let ink = Color(UIColor { traits in
-        traits.userInterfaceStyle == .dark
-            ? UIColor(red: 0.93, green: 0.91, blue: 0.88, alpha: 1)
-            : UIColor(red: 0.11, green: 0.11, blue: 0.11, alpha: 1)
-    })
+    /// Colours of the physical device: green LEDs, white scale on black glass.
+    static let device = LEDStyle(
+        lit: Color(red: 0.05, green: 0.84, blue: 0.40),
+        litTop: Color(red: 0.32, green: 1.00, blue: 0.60),
+        unlit: Color(red: 0.13, green: 0.08, blue: 0.09),
+        label: Color(red: 0.97, green: 0.93, blue: 0.98),
+        glow: true
+    )
 
-    static let index = Color(red: 0.89, green: 0.25, blue: 0.18)
+    /// Lock Screen: iOS tints everything, so just use primary at two strengths.
+    static let accessory = LEDStyle(
+        lit: .primary, litTop: .primary, unlit: .primary.opacity(0.2),
+        label: .primary, glow: false
+    )
 }
 
-// MARK: - Sliding tape
+enum Housing {
+    static let aluminium = LinearGradient(
+        colors: [Color(red: 0.55, green: 0.57, blue: 0.61), Color(red: 0.38, green: 0.40, blue: 0.44)],
+        startPoint: .top, endPoint: .bottom
+    )
+    static let glass = Color(red: 0.02, green: 0.02, blue: 0.02)
+}
 
-/// A horizontal scale whose value at the horizontal centre equals `value`.
-struct SlidingTape: View {
-    let value: Double        // current position, in the tape's units
-    let span: Double         // how many units fit across the width
-    let period: Int          // labels wrap at this number (24 for hours, 60 for minutes)
-    let minorStep: Double    // units between small ticks
-    let majorEvery: Int      // every n-th small tick is a large, labelled tick
-    let ink: Color
-    let fontSize: CGFloat
+// MARK: - LED bar
+
+/// One row of the display: numbered scale, tick marks, then LED segments.
+/// Segment i covers [start + i*segment, start + (i+1)*segment) and is lit once
+/// that span has begun.
+struct LEDBar: View {
+    let start: Double
+    let end: Double
+    let segment: Double      // units per LED segment
+    let labelEvery: Double   // units between numbered (long) ticks
+    let value: Double        // current time in the bar's units
+    var style: LEDStyle = .device
 
     var body: some View {
         Canvas { ctx, size in
-            let pxPerUnit = size.width / span
-            let mid = size.width / 2
-            let first = Int(((value - span / 2) / minorStep).rounded(.down)) - 1
-            let last = Int(((value + span / 2) / minorStep).rounded(.up)) + 1
-
-            // Top rule
-            var rule = Path()
-            rule.move(to: CGPoint(x: 0, y: 0.5))
-            rule.addLine(to: CGPoint(x: size.width, y: 0.5))
-            ctx.stroke(rule, with: .color(ink), lineWidth: 1)
-
-            for i in first...last {
-                let u = Double(i) * minorStep
-                let x = mid + (u - value) * pxPerUnit
-                let isMajor = i.mod(majorEvery) == 0
-                let isHalf = !isMajor && majorEvery % 2 == 0 && i.mod(majorEvery / 2) == 0
-
-                let length = size.height * (isMajor ? 0.40 : (isHalf ? 0.28 : 0.18))
-                var tick = Path()
-                tick.move(to: CGPoint(x: x, y: 0))
-                tick.addLine(to: CGPoint(x: x, y: length))
-                ctx.stroke(tick, with: .color(ink), lineWidth: isMajor ? 1.6 : 0.8)
-
-                if isMajor {
-                    let label = Int(u.rounded()).mod(period)
-                    let text = Text(String(format: "%02d", label))
-                        .font(.system(size: fontSize, weight: .medium, design: .rounded).monospacedDigit())
-                        .foregroundColor(ink)
-                    ctx.draw(text, at: CGPoint(x: x, y: size.height * 0.48), anchor: .top)
-                }
-            }
-        }
-        // Fade the tape out at both ends, like it disappears into the housing.
-        .mask(
-            LinearGradient(
-                stops: [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black, location: 0.16),
-                    .init(color: .black, location: 0.84),
-                    .init(color: .clear, location: 1),
-                ],
-                startPoint: .leading, endPoint: .trailing
-            )
-        )
-    }
-}
-
-/// A fixed 00–24 strip with a marker showing how far through the day we are.
-struct DayStrip: View {
-    let hours: Double
-    let ink: Color
-    let marker: Color
-    let fontSize: CGFloat
-
-    var body: some View {
-        Canvas { ctx, size in
-            let inset: CGFloat = fontSize
+            let H = size.height
+            let units = end - start
+            let labelSpacing = (size.width / units) * labelEvery
+            let fs = min(H * 0.24, labelSpacing * 0.85)  // label font size
+            let inset = fs * 0.45
             let w = size.width - inset * 2
-            let barY = size.height * 0.30
+            let count = Int((units / segment).rounded())
+            let step = w / CGFloat(count)
+            func x(_ u: Double) -> CGFloat { inset + CGFloat((u - start) / units) * w }
 
-            var bar = Path()
-            bar.move(to: CGPoint(x: inset, y: barY))
-            bar.addLine(to: CGPoint(x: inset + w, y: barY))
-            ctx.stroke(bar, with: .color(ink.opacity(0.35)), lineWidth: 1)
+            // Vertical layout, all derived from the label size.
+            let labelBottom = fs * 1.05
+            let longTop = labelBottom + fs * 0.15
+            let shortTop = labelBottom + fs * 0.38
+            let tickBottom = labelBottom + fs * 0.65
+            let segTop = tickBottom + fs * 0.35
 
-            var elapsed = Path()
-            elapsed.move(to: CGPoint(x: inset, y: barY))
-            elapsed.addLine(to: CGPoint(x: inset + w * hours / 24, y: barY))
-            ctx.stroke(elapsed, with: .color(ink), lineWidth: 3)
+            // Scale: a tick at every segment boundary, long + numbered at labelEvery.
+            for i in 0...count {
+                let u = start + Double(i) * segment
+                let ratio = u / labelEvery
+                let isLabel = abs(ratio.rounded() - ratio) < 0.001
+                let px = x(u)
 
-            for h in 0...24 {
-                let x = inset + w * Double(h) / 24
-                let major = h % 6 == 0
-                var t = Path()
-                t.move(to: CGPoint(x: x, y: barY - (major ? 5 : 3)))
-                t.addLine(to: CGPoint(x: x, y: barY + (major ? 5 : 3)))
-                ctx.stroke(t, with: .color(ink), lineWidth: major ? 1.4 : 0.7)
-                if h % 3 == 0 {
-                    let text = Text(String(format: "%02d", h))
-                        .font(.system(size: fontSize, weight: .regular, design: .rounded).monospacedDigit())
-                        .foregroundColor(ink.opacity(0.7))
-                    ctx.draw(text, at: CGPoint(x: x, y: barY + 9), anchor: .top)
+                var tick = Path()
+                tick.move(to: CGPoint(x: px, y: isLabel ? longTop : shortTop))
+                tick.addLine(to: CGPoint(x: px, y: tickBottom))
+                ctx.stroke(tick, with: .color(style.label), lineWidth: isLabel ? 1.4 : 1)
+
+                if isLabel {
+                    let text = Text("\(Int(u.rounded()))")
+                        .font(.system(size: fs, weight: .medium).width(.compressed))
+                        .foregroundColor(style.label)
+                    ctx.draw(text, at: CGPoint(x: px, y: labelBottom), anchor: .bottom)
                 }
             }
 
-            let mx = inset + w * hours / 24
-            let dot = Path(ellipseIn: CGRect(x: mx - 4, y: barY - 4, width: 8, height: 8))
-            ctx.fill(dot, with: .color(marker))
+            // LED segments.
+            let gap = max(1, step * 0.24)
+            var glowCtx = ctx
+            if style.glow {
+                glowCtx.addFilter(.shadow(color: style.lit.opacity(0.75), radius: max(2, step * 0.5)))
+            }
+            for i in 0..<count {
+                let u = start + Double(i) * segment
+                let rect = CGRect(x: x(u) + gap / 2, y: segTop, width: step - gap, height: H - segTop)
+                if u < value {
+                    glowCtx.fill(
+                        Path(rect),
+                        with: .linearGradient(
+                            Gradient(colors: [style.litTop, style.lit]),
+                            startPoint: CGPoint(x: rect.midX, y: rect.minY),
+                            endPoint: CGPoint(x: rect.midX, y: rect.maxY)
+                        )
+                    )
+                } else {
+                    ctx.fill(Path(rect), with: .color(style.unlit))
+                }
+            }
         }
-    }
-}
-
-/// The fixed red index line with a small pointer on top.
-struct IndexLine: View {
-    let color: Color
-
-    var body: some View {
-        VStack(spacing: 0) {
-            Triangle()
-                .fill(color)
-                .frame(width: 9, height: 6)
-            Rectangle()
-                .fill(color)
-                .frame(width: 2)
-        }
-    }
-}
-
-struct Triangle: Shape {
-    func path(in rect: CGRect) -> Path {
-        var p = Path()
-        p.move(to: CGPoint(x: rect.minX, y: rect.minY))
-        p.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
-        p.addLine(to: CGPoint(x: rect.midX, y: rect.maxY))
-        p.closeSubpath()
-        return p
     }
 }
 
@@ -198,89 +155,47 @@ struct LinearClockView: View {
         return (h + m / 60 + s / 3600, m + s / 60)
     }
 
-    private var isAccessory: Bool { family == .accessoryRectangular }
-    private var ink: Color { isAccessory ? .primary : Palette.ink }
-    private var indexColor: Color { isAccessory ? .primary : Palette.index }
-
-    /// (hour span, minute span, label size, padding) per widget size.
-    private var metrics: (hourSpan: Double, minuteSpan: Double, font: CGFloat, padding: CGFloat) {
-        switch family {
-        case .systemSmall:          return (4, 20, 11, 12)
-        case .systemLarge:          return (8, 40, 13, 18)
-        case .systemExtraLarge:     return (12, 60, 15, 22)
-        case .accessoryRectangular: return (4, 20, 10, 0)
-        default:                    return (8, 40, 12, 16)  // medium
-        }
-    }
-
     var body: some View {
         let t = time
-        let m = metrics
 
-        VStack(alignment: .leading, spacing: isAccessory ? 2 : 8) {
-            if !isAccessory {
-                header(fontSize: m.font)
-            }
-
-            ZStack {
-                VStack(spacing: isAccessory ? 2 : 6) {
-                    tapeRow(label: "H", font: m.font) {
-                        SlidingTape(value: t.hours, span: m.hourSpan, period: 24,
-                                    minorStep: 0.25, majorEvery: 4,
-                                    ink: ink, fontSize: m.font)
-                    }
-                    tapeRow(label: "M", font: m.font) {
-                        SlidingTape(value: t.minutes, span: m.minuteSpan, period: 60,
-                                    minorStep: 1, majorEvery: 5,
-                                    ink: ink, fontSize: m.font)
-                    }
+        if family == .accessoryRectangular {
+            // Lock Screen: one 24-segment bar, numbered every 6 hours.
+            LEDBar(start: 0, end: 24, segment: 1, labelEvery: 6, value: t.hours, style: .accessory)
+        } else {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Housing.glass)
+                .overlay {
+                    rows(t)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 12)
                 }
-                IndexLine(color: indexColor)
-            }
-
-            if family == .systemLarge || family == .systemExtraLarge {
-                Spacer(minLength: 4)
-                Text("TODAY")
-                    .font(.system(size: m.font - 2, weight: .semibold))
-                    .tracking(1.5)
-                    .foregroundStyle(ink.opacity(0.6))
-                DayStrip(hours: t.hours, ink: ink, marker: indexColor, fontSize: m.font - 2)
-                    .frame(height: 36)
-            }
+                .padding(9)
         }
-        .padding(m.padding)
     }
 
     @ViewBuilder
-    private func header(fontSize: CGFloat) -> some View {
-        HStack(alignment: .firstTextBaseline) {
-            Text(date, format: .dateTime.weekday(.abbreviated).day().month(.abbreviated))
-                .textCase(.uppercase)
-                .tracking(1.2)
-            Spacer()
-            if family != .systemSmall {
-                Text(date, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
-                    .monospacedDigit()
+    private func rows(_ t: (hours: Double, minutes: Double)) -> some View {
+        switch family {
+        case .systemSmall:
+            // The day split over two rows, one segment per hour.
+            VStack(spacing: 10) {
+                LEDBar(start: 0, end: 12, segment: 1, labelEvery: 1, value: t.hours)
+                LEDBar(start: 12, end: 24, segment: 1, labelEvery: 1, value: t.hours)
+            }
+        case .systemLarge, .systemExtraLarge:
+            // The day over two rows of half-hour segments, plus the current hour.
+            VStack(spacing: 14) {
+                LEDBar(start: 0, end: 12, segment: 0.5, labelEvery: 1, value: t.hours)
+                LEDBar(start: 12, end: 24, segment: 0.5, labelEvery: 1, value: t.hours)
+                LEDBar(start: 0, end: 60, segment: 2.5, labelEvery: 5, value: t.minutes)
+            }
+        default:
+            // Medium: the full 0–24 bar like the real clock, minutes underneath.
+            VStack(spacing: 10) {
+                LEDBar(start: 0, end: 24, segment: 0.5, labelEvery: 1, value: t.hours)
+                LEDBar(start: 0, end: 60, segment: 2.5, labelEvery: 5, value: t.minutes)
             }
         }
-        .font(.system(size: fontSize - 1, weight: .semibold))
-        .foregroundStyle(ink.opacity(0.65))
-    }
-
-    /// The tape fills the row; a tiny unit label sits at the left on bigger widgets.
-    @ViewBuilder
-    private func tapeRow<Content: View>(label: String, font: CGFloat,
-                                        @ViewBuilder content: () -> Content) -> some View {
-        content()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay(alignment: .topLeading) {
-                if family != .systemSmall && !isAccessory {
-                    Text(label)
-                        .font(.system(size: font - 3, weight: .bold))
-                        .foregroundStyle(ink.opacity(0.4))
-                        .offset(y: -font)
-                }
-            }
     }
 }
 
@@ -292,10 +207,10 @@ struct LinearClockWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: ClockProvider()) { entry in
             LinearClockView(date: entry.date)
-                .containerBackground(for: .widget) { Palette.background }
+                .containerBackground(for: .widget) { Housing.aluminium }
         }
         .configurationDisplayName("Linear Clock")
-        .description("Hours and minutes on sliding tapes under a red index line.")
+        .description("The day as a row of green LEDs, one per half hour.")
         .supportedFamilies([
             .systemSmall, .systemMedium, .systemLarge, .systemExtraLarge,
             .accessoryRectangular,
@@ -304,20 +219,12 @@ struct LinearClockWidget: Widget {
     }
 }
 
-// MARK: - Helpers
-
-private extension Int {
-    /// Always-positive modulo.
-    func mod(_ n: Int) -> Int { ((self % n) + n) % n }
-}
-
 // MARK: - Previews
 
 #Preview("Medium", as: .systemMedium) {
     LinearClockWidget()
 } timeline: {
     ClockEntry(date: .now)
-    ClockEntry(date: .now.addingTimeInterval(15 * 60))
 }
 
 #Preview("Small", as: .systemSmall) {
